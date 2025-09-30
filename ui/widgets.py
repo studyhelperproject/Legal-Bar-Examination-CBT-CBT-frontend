@@ -1,7 +1,7 @@
 # ui/widgets.py
 import os
+import unicodedata
 
-import fitz
 from PyQt6.QtWidgets import (
     QLabel, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
     QLineEdit, QMenu, QToolButton, QPlainTextEdit, QSizePolicy, QStackedWidget,
@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QPainterPath, QPainterPathStroker, QFont,
-    QFontMetrics, QFontInfo, QTextOption, QTextFormat, QTextCursor, QPixmap, QImage,
+    QFontMetrics, QFontInfo, QTextOption, QTextFormat, QTextCursor,
     QTextBlockFormat
 )
 from PyQt6.QtCore import Qt, QPointF, QEvent, QPoint, QSize, QRect, pyqtSignal, QTimer
@@ -22,41 +22,6 @@ except ImportError:  # Fallback constant defined in Qt
 
 ASSETS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
 ANSWER_TEMPLATE_PATH = os.path.join(ASSETS_DIR, "answer_template.pdf")
-_TEMPLATE_PIXMAP_CACHE = {}
-
-
-def load_answer_template_pixmap(page_index=0, zoom=1.5):
-    """Render the configured answer sheet template PDF into a cached QPixmap."""
-    if not os.path.exists(ANSWER_TEMPLATE_PATH):
-        return None
-
-    try:
-        mtime = os.path.getmtime(ANSWER_TEMPLATE_PATH)
-    except OSError:
-        mtime = 0
-
-    cache_key = (page_index, zoom, mtime)
-    if cache_key in _TEMPLATE_PIXMAP_CACHE:
-        return _TEMPLATE_PIXMAP_CACHE[cache_key]
-
-    try:
-        with fitz.open(ANSWER_TEMPLATE_PATH) as doc:
-            if page_index < 0 or page_index >= doc.page_count:
-                page_index = 0
-            page = doc.load_page(page_index)
-            matrix = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-    except Exception:
-        return None
-
-    if pix.alpha:
-        image_format = QImage.Format.Format_RGBA8888
-    else:
-        image_format = QImage.Format.Format_RGB888
-    image = QImage(pix.samples, pix.width, pix.height, pix.stride, image_format)
-    pixmap = QPixmap.fromImage(image.copy())
-    _TEMPLATE_PIXMAP_CACHE[cache_key] = pixmap
-    return pixmap
 
 class PDFDisplayLabel(QLabel):
     # (PDFDisplayLabel class is the same as the last working version)
@@ -627,437 +592,353 @@ class TextAnnotationWidget(QWidget):
         self.delete_requested.emit(self)
 
 
-class LineNumberArea(QWidget):
-    def __init__(self, editor):
-        super().__init__(editor)
-        self._editor = editor
+class AnswerGridEditor(QTextEdit):
+    """司法試験用の答案入力テキストエディタ。"""
 
-    def sizeHint(self):
-        return QSize(self._editor.line_number_area_width(), 0)
+    cellMetricsChanged = pyqtSignal()
+    resized = pyqtSignal()
 
-    def paintEvent(self, event):
-        self._editor.line_number_area_paint_event(event)
-
-
-class RuledTextEdit(QPlainTextEdit):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, columns=30, rows=23):
         super().__init__(parent)
-        self.max_lines = 23
-        self.max_chars = 30
+        self.max_chars = columns
+        self.max_lines = rows
         self._internal_change = False
-        self._resizing_font = False
-        self.desired_line_height_mm = 10.0
+        self._scale = 1.0
 
-        self.line_number_area = LineNumberArea(self)
+        # 全角文字用のフォント設定（画像と同じサイズに調整）
+        base_font = QFont("Hiragino Mincho ProN", 30)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("MS Mincho", 30)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Arial Unicode MS", 30)
+        self._base_font = QFont(base_font)
+        self._base_point_size = self._base_font.pointSizeF() or float(self._base_font.pointSize() or 30)
+        self.setFont(self._base_font)
 
-        font = QFont("Hiragino Mincho ProN", 15)
-        if not QFontInfo(font).exactMatch():
-            font = QFont("MS Mincho", 15)
-        self.setFont(font)
-        self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # テキストエディタ設定
+        self.setWordWrapMode(QTextOption.WrapMode.WordWrap)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setUndoRedoEnabled(True)
-        self.setStyleSheet("QPlainTextEdit { background-color: #fffef8; }")
+        
+        # 適切なサイズ設定
+        self.setMinimumSize(600, 400)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        # スタイル設定
+        self.setStyleSheet("""
+            QTextEdit {
+                background-color: white;
+                border: 2px solid #ddd;
+                padding: 20px 20px 20px 120px;
+                line-height: 2.0;
+                font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif;
+                font-size: 30pt;
+                color: black;
+                letter-spacing: 0.1em;
+            }
+            QTextEdit:focus {
+                border: 2px solid #007acc;
+            }
+        """)
 
-        self.document().setDocumentMargin(18)
-        self.blockCountChanged.connect(self.update_line_number_area_width)
-        self.updateRequest.connect(self.update_line_number_area)
-        self.cursorPositionChanged.connect(self.highlight_current_line)
         self.textChanged.connect(self.enforce_limits)
 
-        self.update_line_number_area_width(0)
-        self.highlight_current_line()
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.update_line_metrics()
-        self.update_font_for_width()
-
-    def line_number_area_width(self):
-        digits = len(str(self.max_lines))
-        return 12 + self.fontMetrics().horizontalAdvance('0') * digits
-
-    def update_line_number_area_width(self, _=0):
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
-
-    def update_line_number_area(self, rect, dy):
-        if dy:
-            self.line_number_area.scroll(0, dy)
-        else:
-            self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self.update_line_number_area_width()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        cr = self.contentsRect()
-        self.line_number_area.setGeometry(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
-        self.update_font_for_width()
-
-    def line_number_area_paint_event(self, event):
-        painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#f3f3f3"))
-
-        offset = self.contentOffset()
-        top = int(self.document().documentMargin() + offset.y())
-        line_height = self.line_height
-        width = self.line_number_area.width()
-        number_pen = QPen(QColor("#888888"))
-        painter.setPen(number_pen)
-        for line in range(self.max_lines):
-            y = top + line * line_height
-            if y > event.rect().bottom() + line_height:
-                break
-            painter.drawText(0, y, width - 4, line_height,
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                             f"{line + 1:02}")
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-
-    def highlight_current_line(self):
-        if self.isReadOnly():
+    def keyPressEvent(self, event):
+        # エンターキーで改行
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            cursor = self.textCursor()
+            cursor.insertText('\n')
+            self.setTextCursor(cursor)
             return
-        extra = []
-        selection = QTextEdit.ExtraSelection()
-        line_color = QColor("#f1f7ff")
-        selection.format.setBackground(line_color)
-        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        cursor = QTextCursor(self.textCursor())
-        cursor.clearSelection()
-        selection.cursor = cursor
-        extra.append(selection)
-        self.setExtraSelections(extra)
+        
+        # 半角スペースを全角スペースに変換
+        if event.text() == ' ':
+            cursor = self.textCursor()
+            cursor.insertText('　')
+            self.setTextCursor(cursor)
+            return
+        
+        # 英数入力モードの場合はアルファベットと数字をそのまま入力
+        if event.text() and (event.text().isalnum() or event.text() in '.,!?;:'):
+            super().keyPressEvent(event)
+            return
+        
+        # 通常のキー入力はそのまま処理（日本語変換を妨げない）
+        super().keyPressEvent(event)
+    
+    def _convert_to_fullwidth(self, text):
+        """半角アルファベットを全角に変換"""
+        result = ""
+        for char in text:
+            if 'a' <= char <= 'z':
+                result += chr(ord('ａ') + (ord(char) - ord('a')))
+            elif 'A' <= char <= 'Z':
+                result += chr(ord('Ａ') + (ord(char) - ord('A')))
+            else:
+                result += char
+        return result
+    
+    def _convert_digits_to_fullwidth(self, text):
+        """半角数字を全角に変換"""
+        result = ""
+        for char in text:
+            if '0' <= char <= '9':
+                result += chr(ord('０') + (ord(char) - ord('0')))
+            else:
+                result += char
+        return result
+
+    def base_size(self):
+        return QSize(600, 400)
+
+    def total_size(self):
+        return self.size()
+
+    def cell_size(self):
+        return QSize(20, 20)
 
     def enforce_limits(self):
         if self._internal_change:
             return
-        self._check_overflow()
-
-    def update_line_metrics(self):
-        metrics = self.fontMetrics()
-        dpi_y = float(self.logicalDpiY() or 96)
-        desired_mm = getattr(self, 'desired_line_height_mm', 10.0)
-        desired_px = dpi_y * desired_mm / 25.4
-        self.line_height = desired_px
-        self._ascent = metrics.ascent()
-        self._descent = metrics.descent()
-
-        glyph_height = float(self._ascent + self._descent)
-        top_margin_px = max(0.0, desired_px - glyph_height)
-        self.document().setDocumentMargin(top_margin_px)
-
-        block_format = QTextBlockFormat()
-        try:
-            height_type = QTextBlockFormat.LineHeightTypes.FixedHeight.value
-        except AttributeError:
-            height_type = int(QTextBlockFormat.LineHeightTypes.FixedHeight)
-        block_format.setLineHeight(float(desired_px), height_type)
-
-        cursor = QTextCursor(self.document())
-        previous_internal = getattr(self, '_internal_change', False)
-        self._internal_change = True
-        cursor.beginEditBlock()
-        cursor.select(QTextCursor.SelectionType.Document)
-        cursor.setBlockFormat(block_format)
-        cursor.endEditBlock()
-        self._internal_change = previous_internal
-
-        total_height = int(round(desired_px * self.max_lines + top_margin_px * 2.0))
-        self.setMinimumHeight(total_height)
-        self.setMaximumHeight(total_height)
-        self.update_line_number_area_width()
-        self.viewport().update()
-
-    def update_font_for_width(self):
-        if self._resizing_font:
-            return
-        available = self.viewport().width()
-        if available <= 0:
-            return
-        available = max(available - 8, 20)
-        font = QFont(self.font())
-        min_size = 8.0
-        max_size = 36.0
-        best_size = font.pointSizeF()
-        self._resizing_font = True
-        try:
-            for _ in range(14):
-                mid = (min_size + max_size) / 2
-                font.setPointSizeF(mid)
-                metrics = QFontMetrics(font)
-                char_width = max(metrics.horizontalAdvance('あ'), metrics.averageCharWidth())
-                total_width = char_width * self.max_chars
-                if total_width <= available:
-                    best_size = mid
-                    min_size = mid
-                else:
-                    max_size = mid
-            font.setPointSizeF(best_size)
-            self.setFont(font)
-            self.update_line_metrics()
-            metrics = QFontMetrics(font)
-            char_width = max(metrics.horizontalAdvance('あ'), metrics.averageCharWidth())
-            margins = int(self.document().documentMargin() * 2)
-            width = int(char_width * self.max_chars + margins)
-            total_width = width + self.line_number_area_width()
-            self.setMinimumWidth(total_width)
-            self.setMaximumWidth(total_width)
-        finally:
-            self._resizing_font = False
-
-    def _split_lines(self, text):
-        raw_lines = text.split('\n')
-        lines = []
-        for line in raw_lines:
-            while len(line) > self.max_chars:
-                lines.append(line[:self.max_chars])
-                line = line[self.max_chars:]
-            lines.append(line)
-        return lines
-
-    def _format_text(self, text):
-        lines = self._split_lines(text)
-        limited = lines[:self.max_lines]
-        return '\n'.join(limited)
-
-    def _check_overflow(self):
+        # 文字数制限のチェック
         text = self.toPlainText()
-        lines = self._split_lines(text)
-        trailing_empty = 0
-        for line in reversed(lines):
-            if line == '':
-                trailing_empty += 1
-            else:
-                break
-        if trailing_empty and trailing_empty < len(lines):
-            lines_for_limit = lines[:-trailing_empty]
-        else:
-            lines_for_limit = lines
-
-        formatted = '\n'.join(lines[:self.max_lines])
-        if formatted != text:
+        if len(text) > self.max_chars * self.max_lines:
             cursor = self.textCursor()
-            pos = cursor.position()
-            self._internal_change = True
-            self.setPlainText(formatted)
-            cursor = self.textCursor()
-            cursor.setPosition(min(pos, len(formatted)))
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
             self.setTextCursor(cursor)
-            self._internal_change = False
-
-        parent = self.parent()
-        if len(lines_for_limit) > self.max_lines:
-            overflow_lines = lines_for_limit[self.max_lines:]
-            overflow_text = '\n'.join(overflow_lines).lstrip('\n')
-            if overflow_text and hasattr(parent, 'forward_overflow'):
-                parent.forward_overflow(self, overflow_text)
-                try:
-                    current_idx = parent.pages.index(self)
-                except ValueError:
-                    current_idx = 0
-                parent.set_current_page(min(current_idx + 1, parent.TOTAL_PAGES - 1))
-        elif trailing_empty > 0 and hasattr(parent, 'pull_from_next'):
-            parent.pull_from_next(self)
-
-
-class TemplateTextEdit(RuledTextEdit):
-    """RuledTextEdit configured for overlaying the PDF template background."""
-
-    def __init__(self, parent=None):
-        self._left_offset_cells = 1
-        self._display_scale = 1.0
-        self._syncing_block_margin = False
-        super().__init__(parent)
-        self.desired_line_height_mm = 10.0
-        self._base_desired_line_height_mm = self.desired_line_height_mm
-        base_font = QFont(self.font())
-        self._base_font = QFont(base_font)
-        self._base_font_size = base_font.pointSizeF() if base_font.pointSizeF() > 0 else base_font.pointSize()
-        self.update_line_metrics()
-        if hasattr(self, 'line_number_area'):
-            self.line_number_area.hide()
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setStyleSheet("QPlainTextEdit { background-color: transparent; }")
-        self.update_line_number_area_width(0)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(QWIDGETSIZE_MAX)
-
-    def highlight_current_line(self):
-        if self.isReadOnly():
-            return
-        self.setExtraSelections([])
-
-    def line_number_area_width(self):
-        return 0
-
-    def update_line_number_area_width(self, _=0):
-        self.setViewportMargins(0, 0, 0, 0)
-        if hasattr(self, 'line_number_area'):
-            self.line_number_area.hide()
-
-    def _apply_block_left_margin(self):
-        if self._syncing_block_margin:
-            return
-        metrics = QFontMetrics(self.font())
-        char_width = max(metrics.horizontalAdvance('あ'), metrics.averageCharWidth())
-        doc_margin = self.document().documentMargin()
-        desired_total_left = max(0, self._left_offset_cells * char_width)
-        block_margin = max(0, desired_total_left - doc_margin)
-
-        block_format = QTextBlockFormat()
-        block_format.setLeftMargin(block_margin)
-
-        cursor = QTextCursor(self.document())
-        previous_state = getattr(self, '_internal_change', False)
-        self._internal_change = True
-        self._syncing_block_margin = True
-        try:
-            cursor.beginEditBlock()
-            cursor.select(QTextCursor.SelectionType.Document)
-            cursor.setBlockFormat(block_format)
-            cursor.endEditBlock()
-        finally:
-            self._syncing_block_margin = False
-            self._internal_change = previous_state
-
-    def update_line_metrics(self):
-        super().update_line_metrics()
-        self._apply_block_left_margin()
-        parent = self.parentWidget()
-        if parent and hasattr(parent, 'sync_editor_size') and hasattr(parent, 'editor'):
-            parent.sync_editor_size()
-
-    def update_font_for_width(self):
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(QWIDGETSIZE_MAX)
-        super().update_font_for_width()
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(QWIDGETSIZE_MAX)
 
     def set_display_scale(self, scale):
-        scale = max(scale, 0.1)
-        if abs(scale - getattr(self, '_display_scale', 1.0)) < 1e-4:
+        scale = max(scale, 0.25)
+        if abs(scale - self._scale) < 1e-4:
             return
-        self._display_scale = scale
-        if hasattr(self, '_base_desired_line_height_mm'):
-            self.desired_line_height_mm = self._base_desired_line_height_mm * scale
-        if hasattr(self, '_base_font') and self._base_font_size:
-            font = QFont(self._base_font)
-            font.setPointSizeF(self._base_font_size * scale)
-            self.setFont(font)
-        self.update_line_metrics()
+        self._scale = scale
+        font = QFont(self._base_font)
+        if self._base_point_size > 0:
+            font.setPointSizeF(self._base_point_size * scale)
+        self.setFont(font)
+
+    def insertFromMimeData(self, source):
+        text = source.text()
+        if text:
+            # 半角スペースのみ全角に変換、アルファベットと数字はそのまま
+            normalized = text.replace(' ', '　')
+            cursor = self.textCursor()
+            cursor.insertText(normalized)
+            return
+        super().insertFromMimeData(source)
+    
+    def _normalize_text(self, text):
+        """テキストを全角に正規化"""
+        result = ""
+        for char in text:
+            if char == ' ':
+                result += '　'
+            elif 'a' <= char <= 'z':
+                result += chr(ord('ａ') + (ord(char) - ord('a')))
+            elif 'A' <= char <= 'Z':
+                result += chr(ord('Ａ') + (ord(char) - ord('A')))
+            elif '0' <= char <= '9':
+                result += chr(ord('０') + (ord(char) - ord('0')))
+            else:
+                result += char
+        return result
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
+        # 親ウィジェットの背景も更新
+        if self.parent():
+            self.parent().update()
+
+
+class AnswerGridBackground(QWidget):
+    """答案エディタの背後に原稿用紙風の罫線を描画するウィジェット。"""
+
+    def __init__(self, editor: AnswerGridEditor, parent=None):
+        super().__init__(parent)
+        self._editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._editor.cellMetricsChanged.connect(self._sync_with_editor)
+        self._sync_with_editor()
+
+    def _sync_with_editor(self):
+        size = self._editor.total_size()
+        self.setMinimumSize(size)
+        self.setMaximumSize(size)
+        self.resize(size)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), QColor(255, 255, 255))
+
+        if not self._editor:
+            return
+
+        # 行の高さを計算（フォントメトリクスから）
+        font_metrics = QFontMetrics(self._editor.font())
+        line_height = font_metrics.height()
+        ascent = font_metrics.ascent()
+        
+        if line_height <= 0:
+            return
+
+        rect = self.rect()
+        x_start = rect.x() + 15  # パディングを考慮
+        y_start = rect.y() + 15  # パディングを考慮
+        x_end = rect.right() - 15
+        y_end = rect.bottom() - 15
+
+        # 行番号エリアの幅
+        line_number_width = 50
+
+        # 行番号エリアの背景を描画
+        painter.fillRect(x_start, y_start, line_number_width, y_end - y_start, QColor(248, 248, 248))
+        
+        # 行番号エリアの右端に線を描画
+        pen = QPen(QColor(200, 200, 200), 1)
+        painter.setPen(pen)
+        painter.drawLine(x_start + line_number_width, y_start, x_start + line_number_width, y_end)
+
+        # 行ごとの水平線を描画
+        pen = QPen(QColor(220, 220, 220), 1)
+        painter.setPen(pen)
+        
+        y = y_start + line_height
+        line_number = 1
+        while y <= y_end:
+            # 水平線を描画
+            painter.drawLine(x_start + line_number_width + 5, y, x_end, y)
+            
+            # 行番号を描画
+            painter.setPen(QPen(QColor(100, 100, 100), 1))
+            painter.drawText(x_start + 5, y - ascent + line_height, f"頁1 {line_number}")
+            
+            # 次の行に移動
+            y += line_height
+            line_number += 1
+
+
 
 
 class AnswerSheetPageWidget(QWidget):
-    """Single answer sheet page composed of template background and text editor."""
+    """司法試験用の答案入力ページ。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._base_pixmap = load_answer_template_pixmap() or QPixmap()
-        self.background_label = QLabel()
-        self.background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.background_label.setScaledContents(True)
-        self.background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.editor = AnswerGridEditor(self)
 
-        self.editor = TemplateTextEdit(self)
-        self.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.editor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # レイアウト設定
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(self.editor)
 
-        self.background_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-
-        self._stack = QStackedLayout(self)
-        self._stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
-        self._stack.setContentsMargins(0, 0, 0, 0)
-        self._stack.addWidget(self.background_label)
-        self._stack.addWidget(self.editor)
-        self.editor.raise_()
+        # 描画を有効化するための属性設定
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        
+        # エディタの背景を透明にして、親の描画が見えるようにする
+        self.editor.setStyleSheet("""
+            QTextEdit {
+                background-color: transparent;
+                border: 2px solid #ddd;
+                padding: 20px 20px 20px 120px;
+                line-height: 2.0;
+                font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif;
+                font-size: 30pt;
+                color: black;
+                letter-spacing: 0.1em;
+            }
+            QTextEdit:focus {
+                border: 2px solid #007acc;
+            }
+        """)
 
         self.setFocusProxy(self.editor)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # 初期描画を強制
+        self.update()
 
         self._scale = 1.0
-        self._syncing = False
-        self._base_editor_width = max(1, self.editor.sizeHint().width())
-        self._base_editor_height = max(1, self.editor.sizeHint().height())
-        if self._base_pixmap.isNull():
-            self._base_page_width = self._base_editor_width
-            self._base_page_height = self._base_editor_height
-        else:
-            self._base_page_width = self._base_pixmap.width()
-            self._base_page_height = self._base_pixmap.height()
 
-        self.apply_scale(self._scale)
+    def paintEvent(self, event):
+        # 背景を描画
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        
+        # 全体の背景を白で塗りつぶし
+        painter.fillRect(self.rect(), QColor(255, 255, 255))
+        
+        # エディタの位置とサイズを取得
+        editor_rect = self.editor.geometry()
+
+        # 行の高さを計算
+        font_metrics = QFontMetrics(self.editor.font())
+        line_height = font_metrics.height()
+        ascent = font_metrics.ascent()
+        
+        if line_height <= 0:
+            return
+
+        # 行番号エリアの幅を大きくする
+        line_number_width = 100
+
+        # 行番号エリアの背景を描画
+        line_number_rect = QRect(editor_rect.x() + 20, editor_rect.y() + 20, 
+                                line_number_width, editor_rect.height() - 40)
+        painter.fillRect(line_number_rect, QColor(248, 248, 248))
+        
+        # 行番号エリアの右端に線を描画
+        pen = QPen(QColor(200, 200, 200), 1)
+        painter.setPen(pen)
+        painter.drawLine(line_number_rect.right(), line_number_rect.top(), 
+                        line_number_rect.right(), line_number_rect.bottom())
+
+        # QTextEditの実際の行の位置を取得して描画
+        document = self.editor.document()
+        block_count = document.blockCount()
+        
+        # 行ごとの水平線を描画
+        pen = QPen(QColor(220, 220, 220), 1)
+        painter.setPen(pen)
+        
+        for i in range(block_count):
+            block = document.findBlockByNumber(i)
+            if block.isValid():
+                # ブロックの位置を取得（正しいメソッド呼び出し）
+                block_rect = self.editor.document().documentLayout().blockBoundingRect(block)
+                # エディタ内での実際の位置を計算
+                y = int(editor_rect.y() + 20 + block_rect.y() + ascent)
+                
+                # 水平線を描画
+                painter.drawLine(line_number_rect.right() + 10, y, 
+                               editor_rect.right() - 20, y)
+                
+                # 行番号を描画
+                painter.setPen(QPen(QColor(100, 100, 100), 1))
+                painter.drawText(line_number_rect.x() + 10, y, str(i + 1))
+                painter.setPen(QPen(QColor(220, 220, 220), 1))
 
     def base_size(self):
-        return QSize(self._base_editor_width, self._base_editor_height)
+        return QSize(600, 400)
 
     def current_size(self):
-        return QSize(self.width(), self.height())
+        return self.size()
 
     def set_scale(self, scale):
-        scale = max(scale, 0.1)
+        scale = max(scale, 0.25)
         if abs(scale - self._scale) < 1e-4:
             return
         self._scale = scale
         self.editor.set_display_scale(scale)
-        self.apply_scale(scale)
-
-    def apply_scale(self, scale):
-        if self._syncing:
-            return
-        self._syncing = True
-        try:
-            metrics = self.editor.fontMetrics()
-            char_width = max(metrics.horizontalAdvance('あ'), metrics.averageCharWidth())
-            baseline_min_width = int(char_width * getattr(self.editor, 'max_chars', 30)) + 40
-            target_width = max(baseline_min_width, int(round(self._base_editor_width * scale)))
-            self.editor.setMinimumWidth(target_width)
-            self.editor.setMaximumWidth(target_width)
-            self.editor.resize(target_width, self.editor.height())
-            self.editor.update_font_for_width()
-            target_height = max(1, self.editor.minimumHeight())
-            self.editor.setMinimumHeight(target_height)
-            self.editor.setMaximumHeight(target_height)
-            self.editor.resize(target_width, target_height)
-
-            self.background_label.setMinimumWidth(target_width)
-            self.background_label.setFixedSize(target_width, target_height)
-            self.setFixedSize(target_width, target_height)
-            self._update_background_pixmap(target_width, target_height)
-
-            stack = self.parentWidget()
-            if stack and isinstance(stack, QStackedWidget):
-                stack.setMinimumSize(target_width, target_height)
-                stack.setMaximumHeight(target_height)
-        finally:
-            self._syncing = False
 
     def sync_editor_size(self):
-        self.apply_scale(self._scale)
-
-    def _update_background_pixmap(self, width=None, height=None):
-        if self._base_pixmap.isNull():
-            self.background_label.clear()
-            return
-        width = width or self.width()
-        height = height or self.height()
-        if width <= 0 or height <= 0:
-            return
-        scaled = self._base_pixmap.scaled(
-            QSize(width, height),
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.background_label.setPixmap(scaled)
-
-    def sizeHint(self):
-        return QSize(self._base_editor_width, self._base_editor_height)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_background_pixmap()
+        pass
 
 class ShapeAnnotationWidget(QWidget):
     delete_requested = pyqtSignal(QWidget)
@@ -1577,11 +1458,11 @@ class AnswerSheet(QWidget):
         total_chars = 0
         for editor in self.pages:
             text = editor.toPlainText()
-            lines = editor._split_lines(text)
+            lines = text.split('\n')
             if text.endswith('\n'):
                 lines.append('')
             for line in lines[:editor.max_lines]:
-                total_chars += max(len(line), editor.max_chars)
+                total_chars += len(line)
         return min(total_chars, limit)
 
     def total_line_count(self):
@@ -1590,13 +1471,7 @@ class AnswerSheet(QWidget):
             text = editor.toPlainText()
             if not text:
                 continue
-            if text.strip() == '':
-                blank_lines = text.count('\n')
-                if blank_lines == 0:
-                    blank_lines = 1
-                total += min(blank_lines, editor.max_lines)
-                continue
-            lines = editor._split_lines(text)
+            lines = text.split('\n')
             if text.endswith('\n'):
                 lines.append('')
             total += min(len(lines), editor.max_lines)
