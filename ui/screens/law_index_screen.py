@@ -15,7 +15,7 @@ class LawIndexScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 設定値（ハードコーディング）
+        # 設定値
         self.LAW_TREE_WIDTH = 300
         self.LAW_CONTENT_WIDTH = 700
         self.SEARCH_TIMEOUT = 500  # ミリ秒
@@ -30,7 +30,7 @@ class LawIndexScreen(QWidget):
         self.load_law_data()
     
     def setup_ui(self):
-        """UIの構築 - 全てベタ書き"""
+        """UIの構築 """
         layout = QVBoxLayout(self)
         
         # 検索バー

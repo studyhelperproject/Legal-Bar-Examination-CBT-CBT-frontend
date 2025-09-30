@@ -47,7 +47,7 @@ class ExamTextScreen(QWidget):
         self.setup_connections()
     
     def setup_ui(self):
-        """UIの構築 - 全てベタ書き"""
+        """UIの構築"""
         layout = QVBoxLayout(self)
         
         # ツールバー

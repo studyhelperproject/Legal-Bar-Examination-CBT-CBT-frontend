@@ -15,7 +15,7 @@ class AnswerScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 設定値（ハードコーディング）
+        # 設定値
         self.MAX_PAGES = 8
         self.MAX_LINES_PER_PAGE = 23
         self.MAX_CHARS_PER_LINE = 30
@@ -30,7 +30,7 @@ class AnswerScreen(QWidget):
         self.initialize_answer_pages()
     
     def setup_ui(self):
-        """UIの構築 - 全てベタ書き"""
+        """UIの構築"""
         layout = QVBoxLayout(self)
         
         # 情報バー
@@ -118,29 +118,11 @@ class AnswerScreen(QWidget):
     
     def create_answer_page(self, question_number):
         """答案ページを作成"""
-        page_widget = QWidget()
-        layout = QVBoxLayout(page_widget)
-        
-        # 原稿用紙風のエディタ
-        editor = QTextEdit()
-        editor.setFont(QFont("Hiragino Mincho ProN", self.FONT_SIZE))
-        editor.setStyleSheet("""
-            QTextEdit {
-                background-color: white;
-                border: 2px solid #ddd;
-                padding: 20px 20px 20px 120px;
-                line-height: 2.0;
-                font-family: 'Hiragino Mincho ProN', 'MS Mincho', serif;
-                font-size: 30pt;
-                color: black;
-                letter-spacing: 0.1em;
-            }
-        """)
+        page_widget = AnswerPageWidget()
         
         # 文字数制限の設定
-        editor.textChanged.connect(lambda: self.enforce_character_limit(editor))
+        page_widget.editor.textChanged.connect(lambda: self.enforce_character_limit(page_widget.editor))
         
-        layout.addWidget(editor)
         return page_widget
     
     # 各機能のメソッド（冗長でも明確に）
@@ -258,3 +240,277 @@ class AnswerScreen(QWidget):
         max_lines = self.MAX_PAGES * self.MAX_LINES_PER_PAGE
         
         self.char_count_label.setText(f"{total_lines}/{max_lines}行 {total_chars}/{max_chars}文字 (空白含む)")
+
+class AnswerPageWidget(QWidget):
+    """原稿用紙風の答案ページウィジェット"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # 固定幅での正確なmm単位設定
+        # 1mm = 3.7795275590551ピクセル (96 DPI)
+        mm_to_px = 3.7795275590551
+        
+        # 固定の測定値（mm単位）
+        text_height_mm = 5      # 文字の高さ: 5mm
+        line_spacing_mm = 2     # 改行のスペース: 2mm
+        top_margin_mm = 1       # 上余白: 1mm
+        bottom_margin_mm = 1    # 下余白: 1mm
+        
+        # ピクセルに変換（固定値）
+        text_height_px = int(text_height_mm * mm_to_px)      # 約19px
+        line_spacing_px = int(line_spacing_mm * mm_to_px)     # 約8px
+        top_margin_px = int(top_margin_mm * mm_to_px)         # 約4px
+        bottom_margin_px = int(bottom_margin_mm * mm_to_px)   # 約4px
+        
+        # インスタンス変数に保存
+        self._text_height_px = text_height_px
+        self._line_spacing_px = line_spacing_px
+        self._top_margin_px = top_margin_px
+        self._bottom_margin_px = bottom_margin_px
+        
+        # 行の高さ = 文字の高さ + 改行のスペース
+        self._total_line_height_px = text_height_px + line_spacing_px  # 約27px
+        
+        # 文字サイズを30pxに設定
+        target_font_size = 30
+        
+        # 完全等幅フォントを優先
+        base_font = QFont("Courier New", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Monaco", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Consolas", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Hiragino Mincho ProN", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("MS Mincho", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Arial Unicode MS", target_font_size)
+        
+        self._base_font = QFont(base_font)
+        self._base_font.setFixedPitch(True)  # 等幅フォントに設定
+        self._base_font.setStyleHint(QFont.StyleHint.Monospace)  # モノスペースフォントを強制
+        self._base_point_size = self._base_font.pointSizeF() or float(self._base_font.pointSize() or target_font_size)
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """UIの構築"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # エディタを作成
+        self.editor = AnswerGridEditor(self)
+        layout.addWidget(self.editor)
+        
+        # 描画イベントを有効にする
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        
+        # エディタの背景を透明にして、親の描画が見えるようにする
+        self.editor.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: transparent;
+                border: 2px solid #ddd;
+                padding: {self._top_margin_px}px 20px {self._bottom_margin_px}px 120px;
+                line-height: {self._total_line_height_px / self._text_height_px};
+                font-family: 'Courier New', 'Monaco', 'Consolas', 'Hiragino Mincho ProN', 'MS Mincho', monospace;
+                font-size: 30px;
+                color: black;
+                letter-spacing: 0.1em;
+            }}
+            QTextEdit:focus {{
+                border: 2px solid #007acc;
+            }}
+        """)
+        
+        # 初期描画を強制
+        self.update()
+        
+        # エディタのリサイズ時に再描画
+        self.editor.resized.connect(self.update)
+    
+    def paintEvent(self, event):
+        """背景と行番号を描画"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        
+        # 背景を白で塗りつぶし
+        painter.fillRect(self.rect(), QColor(255, 255, 255))
+        
+        # エディタの位置を取得
+        editor_rect = self.editor.geometry()
+        
+        # 行番号エリアの設定
+        line_number_width = 100
+        line_number_rect = QRect(0, 0, line_number_width, editor_rect.height())
+        
+        # 行番号エリアをグレーで塗りつぶし
+        painter.fillRect(line_number_rect, QColor(240, 240, 240))
+        
+        # 行番号エリアとテキストエリアの境界線
+        pen = QPen(QColor(200, 200, 200), 1)
+        painter.setPen(pen)
+        painter.drawLine(line_number_rect.right(), line_number_rect.top(), 
+                        line_number_rect.right(), line_number_rect.bottom())
+        
+        # QTextEditの実際の行の位置を取得して描画
+        document = self.editor.document()
+        block_count = document.blockCount()
+        
+        # 行ごとの水平線を描画
+        pen = QPen(QColor(220, 220, 220), 1)
+        painter.setPen(pen)
+        
+        for i in range(block_count):
+            block = document.findBlockByNumber(i)
+            if block.isValid():
+                # ブロックの位置を取得（正しいメソッド呼び出し）
+                block_rect = self.editor.document().documentLayout().blockBoundingRect(block)
+                # エディタ内での実際の位置を計算
+                y = int(editor_rect.y() + 20 + block_rect.y() + self._text_height_px)
+                
+                # 水平線を描画
+                painter.drawLine(line_number_rect.right() + 10, y, 
+                               editor_rect.right() - 20, y)
+                
+                # 行番号を描画
+                painter.setPen(QPen(QColor(100, 100, 100), 1))
+                painter.drawText(line_number_rect.x() + 10, y, str(i + 1))
+                painter.setPen(QPen(QColor(220, 220, 220), 1))
+
+class AnswerGridEditor(QTextEdit):
+    """原稿用紙風のテキストエディタ"""
+    
+    resized = pyqtSignal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # 固定幅での正確なmm単位設定
+        # 1mm = 3.7795275590551ピクセル (96 DPI)
+        mm_to_px = 3.7795275590551
+        
+        # 固定の測定値（mm単位）
+        text_height_mm = 5      # 文字の高さ: 5mm
+        line_spacing_mm = 2     # 改行のスペース: 2mm
+        top_margin_mm = 1       # 上余白: 1mm
+        bottom_margin_mm = 1    # 下余白: 1mm
+        
+        # ピクセルに変換（固定値）
+        text_height_px = int(text_height_mm * mm_to_px)      # 約19px
+        line_spacing_px = int(line_spacing_mm * mm_to_px)     # 約8px
+        top_margin_px = int(top_margin_mm * mm_to_px)         # 約4px
+        bottom_margin_px = int(bottom_margin_mm * mm_to_px)   # 約4px
+        
+        # インスタンス変数に保存
+        self._text_height_px = text_height_px
+        self._line_spacing_px = line_spacing_px
+        self._top_margin_px = top_margin_px
+        self._bottom_margin_px = bottom_margin_px
+        
+        # 行の高さ = 文字の高さ + 改行のスペース
+        self._total_line_height_px = text_height_px + line_spacing_px  # 約27px
+        
+        # 文字サイズを30pxに設定
+        target_font_size = 30
+        
+        # 完全等幅フォントを優先
+        base_font = QFont("Courier New", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Monaco", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Consolas", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Hiragino Mincho ProN", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("MS Mincho", target_font_size)
+        if not QFontInfo(base_font).exactMatch():
+            base_font = QFont("Arial Unicode MS", target_font_size)
+        
+        self._base_font = QFont(base_font)
+        self._base_font.setFixedPitch(True)  # 等幅フォントに設定
+        self._base_font.setStyleHint(QFont.StyleHint.Monospace)  # モノスペースフォントを強制
+        self._base_point_size = self._base_font.pointSizeF() or float(self._base_font.pointSize() or target_font_size)
+        self.setFont(self._base_font)
+        
+        # テキストエディタ設定
+        self.setAcceptRichText(False)
+        self.setWordWrapMode(QTextOption.WrapMode.WordWrap)
+        self.setUndoRedoEnabled(True)
+        
+        # 適切なサイズ設定
+        self.setMinimumSize(600, 400)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        # スタイル設定
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: white;
+                border: 2px solid #ddd;
+                padding: {self._top_margin_px}px 20px {self._bottom_margin_px}px 120px;
+                line-height: {self._total_line_height_px / self._text_height_px};
+                font-family: 'Courier New', 'Monaco', 'Consolas', 'Hiragino Mincho ProN', 'MS Mincho', monospace;
+                font-size: 30px;
+                color: black;
+                letter-spacing: 0.1em;
+            }}
+            QTextEdit:focus {{
+                border: 2px solid #007acc;
+            }}
+        """)
+        
+        self.textChanged.connect(self.enforce_limits)
+    
+    def keyPressEvent(self, event):
+        # エンターキーで改行
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            cursor = self.textCursor()
+            cursor.insertText('\n')
+            self.setTextCursor(cursor)
+            return
+        
+        # 半角スペースを全角スペースに変換
+        if event.text() == ' ':
+            cursor = self.textCursor()
+            cursor.insertText('　')
+            self.setTextCursor(cursor)
+            return
+        
+        # 英数入力モードの場合はアルファベットと数字をそのまま入力
+        if event.text() and (event.text().isalnum() or event.text() in '.,!?;:'):
+            super().keyPressEvent(event)
+            return
+        
+        # 通常のキー入力はそのまま処理（日本語変換を妨げない）
+        super().keyPressEvent(event)
+    
+    def insertFromMimeData(self, mime_data):
+        """ペースト時の処理"""
+        if mime_data.hasText():
+            text = mime_data.text()
+            # 半角スペースを全角スペースに変換
+            text = text.replace(' ', '　')
+            cursor = self.textCursor()
+            cursor.insertText(text)
+            self.setTextCursor(cursor)
+        else:
+            super().insertFromMimeData(mime_data)
+    
+    def enforce_limits(self):
+        """文字数制限を適用"""
+        text = self.toPlainText()
+        # 最大文字数制限（8ページ × 23行 × 30文字 = 5520文字）
+        max_chars = 8 * 23 * 30
+        if len(text) > max_chars:
+            cursor = self.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            self.setTextCursor(cursor)
+    
+    def resizeEvent(self, event):
+        """リサイズイベント"""
+        super().resizeEvent(event)
+        self.resized.emit()

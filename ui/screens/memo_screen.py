@@ -14,7 +14,7 @@ class MemoScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 設定値（ハードコーディング）
+        # 設定値
         self.MAX_MEMOS = 10
         self.DEFAULT_FONT_SIZE = 14
         
@@ -27,7 +27,7 @@ class MemoScreen(QWidget):
         self.initialize_memos()
     
     def setup_ui(self):
-        """UIの構築 - 全てベタ書き"""
+        """UIの構築"""
         layout = QVBoxLayout(self)
         
         # メモ選択バー
