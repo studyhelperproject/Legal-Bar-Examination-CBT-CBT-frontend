@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 
 from .answer_search_bar import AnswerSearchBar
 from .answer_page import AnswerSheetPageWidget
-from .answer_editor import AnswerGridEditor
+from .scrollable_editor import ScrollableAnswerEditor
 from .text_editor_config import TextEditorConfig
 
 if TYPE_CHECKING:
@@ -130,7 +130,7 @@ class AnswerSheet(QWidget):
         """現在表示されているページウィジェットを返す。"""
         return self.pages[self.current_page_index]
 
-    def current_editor(self) -> AnswerGridEditor:
+    def current_editor(self) -> ScrollableAnswerEditor:
         """現在表示されているページのエディタウィジェットを返す。"""
         return self.current_page().editor
 
