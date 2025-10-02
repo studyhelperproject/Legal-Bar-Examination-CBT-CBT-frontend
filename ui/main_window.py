@@ -1,7 +1,6 @@
 # ui/main_window.py
 import sys, os, fitz, re, json
 from datetime import datetime
-from weakref import WeakKeyDictionary
 
 from docx import Document
 from docx.shared import Cm, Pt
@@ -12,8 +11,7 @@ from PyQt6.QtWidgets import (
     QTextBrowser, QTextEdit, QLabel, QPushButton, QFileDialog,
     QSplitter, QToolBar, QLineEdit, QTreeWidgetItem, QTreeWidget,
     QTabWidget, QMessageBox, QButtonGroup, QSizePolicy, QComboBox,
-    QScrollArea, QGridLayout, QToolButton, QDialog, QPlainTextEdit,
-    QDialogButtonBox, QSpinBox, QListWidget, QListWidgetItem
+    QScrollArea, QGridLayout, QToolButton, QDialog, QListWidget, QListWidgetItem
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QAction, QColor, QTextCursor, QTextCharFormat,
@@ -21,278 +19,15 @@ from PyQt6.QtGui import (
     QActionGroup, QIcon, QPainter, QKeySequence,
     QPainterPath, QShortcut, QTextDocument
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl, QRect, QSize, QSizeF, QPointF, QObject, QEvent, pyqtSignal, QRectF
+from PyQt6.QtCore import Qt, QTimer, QUrl, QRect, QSize, QSizeF, QPointF, QRectF
 
 # モジュール化したファイルをインポート
+from ui.components import KanaInputFilter, ClickableLabel
+from ui.dialogs import TimerSettingsDialog
 from ui.widgets import PDFDisplayLabel, MemoWindow, AnswerSheet, TextAnnotationWidget, ShapeAnnotationWidget, ANSWER_TEMPLATE_PATH
 from utils.constants import LAW_DATA
 from utils.law_fetcher import LawFetcherThread
 from utils.xml_parser import parse_law_xml_to_html, kanji_to_number_string
-
-ROMAJI_TO_HIRAGANA = {
-    'a': 'あ', 'i': 'い', 'u': 'う', 'e': 'え', 'o': 'お',
-    'ka': 'か', 'ki': 'き', 'ku': 'く', 'ke': 'け', 'ko': 'こ',
-    'ga': 'が', 'gi': 'ぎ', 'gu': 'ぐ', 'ge': 'げ', 'go': 'ご',
-    'sa': 'さ', 'shi': 'し', 'si': 'し', 'su': 'す', 'se': 'せ', 'so': 'そ',
-    'za': 'ざ', 'ji': 'じ', 'zi': 'じ', 'zu': 'ず', 'ze': 'ぜ', 'zo': 'ぞ',
-    'ta': 'た', 'chi': 'ち', 'ti': 'ち', 'tsu': 'つ', 'tu': 'つ', 'te': 'て', 'to': 'と',
-    'da': 'だ', 'di': 'ぢ', 'du': 'づ', 'de': 'で', 'do': 'ど',
-    'na': 'な', 'ni': 'に', 'nu': 'ぬ', 'ne': 'ね', 'no': 'の',
-    'ha': 'は', 'hi': 'ひ', 'hu': 'ふ', 'fu': 'ふ', 'he': 'へ', 'ho': 'ほ',
-    'ba': 'ば', 'bi': 'び', 'bu': 'ぶ', 'be': 'べ', 'bo': 'ぼ',
-    'pa': 'ぱ', 'pi': 'ぴ', 'pu': 'ぷ', 'pe': 'ぺ', 'po': 'ぽ',
-    'ma': 'ま', 'mi': 'み', 'mu': 'む', 'me': 'め', 'mo': 'も',
-    'ya': 'や', 'yu': 'ゆ', 'yo': 'よ',
-    'ra': 'ら', 'ri': 'り', 'ru': 'る', 're': 'れ', 'ro': 'ろ',
-    'wa': 'わ', 'we': 'うぇ', 'wi': 'うぃ', 'wo': 'を',
-    'fa': 'ふぁ', 'fi': 'ふぃ', 'fe': 'ふぇ', 'fo': 'ふぉ',
-    'va': 'ゔぁ', 'vi': 'ゔぃ', 'vu': 'ゔ', 've': 'ゔぇ', 'vo': 'ゔぉ',
-    'la': 'ぁ', 'li': 'ぃ', 'lu': 'ぅ', 'le': 'ぇ', 'lo': 'ぉ',
-    'xa': 'ぁ', 'xi': 'ぃ', 'xu': 'ぅ', 'xe': 'ぇ', 'xo': 'ぉ',
-    'kya': 'きゃ', 'kyu': 'きゅ', 'kyo': 'きょ',
-    'gya': 'ぎゃ', 'gyu': 'ぎゅ', 'gyo': 'ぎょ',
-    'sha': 'しゃ', 'shu': 'しゅ', 'sho': 'しょ',
-    'sya': 'しゃ', 'syu': 'しゅ', 'syo': 'しょ',
-    'ja': 'じゃ', 'ju': 'じゅ', 'jo': 'じょ',
-    'jya': 'じゃ', 'jyu': 'じゅ', 'jyo': 'じょ',
-    'cha': 'ちゃ', 'chu': 'ちゅ', 'cho': 'ちょ',
-    'tya': 'ちゃ', 'tyu': 'ちゅ', 'tyo': 'ちょ',
-    'nya': 'にゃ', 'nyu': 'にゅ', 'nyo': 'にょ',
-    'hya': 'ひゃ', 'hyu': 'ひゅ', 'hyo': 'ひょ',
-    'bya': 'びゃ', 'byu': 'びゅ', 'byo': 'びょ',
-    'pya': 'ぴゃ', 'pyu': 'ぴゅ', 'pyo': 'ぴょ',
-    'mya': 'みゃ', 'myu': 'みゅ', 'myo': 'みょ',
-    'rya': 'りゃ', 'ryu': 'りゅ', 'ryo': 'りょ',
-    'lya': 'ゃ', 'lyu': 'ゅ', 'lyo': 'ょ',
-    'xya': 'ゃ', 'xyu': 'ゅ', 'xyo': 'ょ',
-    'nn': 'ん',
-}
-
-VOWELS = {'a', 'i', 'u', 'e', 'o'}
-
-KANA_DIRECT_MAP = {
-    '`': 'ろ', '~': 'ろ',
-    '1': 'ぬ', '2': 'ふ', '3': 'あ', '4': 'う', '5': 'え', '6': 'お', '7': 'や', '8': 'ゆ', '9': 'よ', '0': 'わ',
-    '-': 'ほ', '=': 'へ', '^': 'へ',
-    'q': 'た', 'w': 'て', 'e': 'い', 'r': 'す', 't': 'か', 'y': 'ん', 'u': 'な', 'i': 'に', 'o': 'ら', 'p': 'せ',
-    '@': '゛', '[': '「',
-    'a': 'ち', 's': 'と', 'd': 'し', 'f': 'は', 'g': 'き', 'h': 'く', 'j': 'ま', 'k': 'の', 'l': 'り',
-    ';': 'れ', ':': 'け', "'": 'け', ']': '」', '\\': 'む',
-    'z': 'つ', 'x': 'さ', 'c': 'そ', 'v': 'ひ', 'b': 'こ', 'n': 'み', 'm': 'も',
-    ',': 'ね', '.': 'る', '/': 'め'
-}
-
-KANA_DIRECT_SHIFT_MAP = {
-    '!': 'ぬ', '@': '゛', '#': 'ぁ', '$': 'ぅ', '%': 'ぇ',
-    '&': 'や', '*': 'ゆ', '(': 'よ', ')': 'わ', '_': 'ー', '+': 'へ',
-    '{': '『', '}': '』', '|': 'む', '<': '、', '>': '。', '?': '・', '"': '゜',
-    '~': 'ろ'
-}
-
-
-class KanaInputFilter(QObject):
-    def __init__(self, main_window):
-        super().__init__(main_window)
-        self.main_window = main_window
-        self.mode = 'off'
-        self.buffers = WeakKeyDictionary()
-
-    def set_mode(self, mode):
-        if mode not in ('roma', 'kana'):
-            mode = 'off'
-        if mode != self.mode:
-            self.mode = mode
-            self.buffers.clear()
-
-    def eventFilter(self, obj, event):
-        if self.mode == 'off' or event.type() != QEvent.Type.KeyPress:
-            return False
-        if not isinstance(obj, (QTextEdit, QPlainTextEdit)):
-            return False
-        if hasattr(obj, 'isReadOnly') and obj.isReadOnly():
-            return False
-        window = obj.window()
-        if window not in (self.main_window, getattr(self.main_window, 'memo_window', None)):
-            return False
-        if self.mode == 'kana':
-            return self._handle_direct_kana(obj, event)
-        return self._handle_romaji(obj, event)
-
-    def _handle_romaji(self, widget, event):
-        key = event.key()
-        text = event.text()
-
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._commit_pending_n(widget)
-            return False
-
-        if key == Qt.Key.Key_Backspace:
-            buf = self.buffers.get(widget, '')
-            if buf:
-                self.buffers[widget] = buf[:-1]
-                return True
-            return False
-
-        if not text:
-            return False
-
-        if text in ('\r', '\n', '\t'):
-            self._commit_pending_n(widget)
-            return False
-
-        if not text.isalpha():
-            self._commit_pending_n(widget, force=True)
-            return False
-
-        char = text.lower()
-        buf = self.buffers.get(widget, '') + char
-
-        if char == 'n' and buf.endswith('nn'):
-            self._insert_text(widget, 'ん')
-            self.buffers[widget] = 'n'
-            return True
-
-        if len(buf) >= 2 and buf[-1] == buf[-2] and buf[-1] not in VOWELS and buf[-1] != 'n':
-            self._insert_text(widget, 'っ')
-            buf = buf[-1]
-
-        for length in range(min(3, len(buf)), 0, -1):
-            segment = buf[-length:]
-            if segment in ROMAJI_TO_HIRAGANA:
-                kana = ROMAJI_TO_HIRAGANA[segment]
-                self._insert_text(widget, kana)
-                remainder = buf[:-length]
-                if remainder:
-                    self.buffers[widget] = remainder
-                else:
-                    self.buffers.pop(widget, None)
-                return True
-
-        self.buffers[widget] = buf
-        return True
-
-    def _handle_direct_kana(self, widget, event):
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
-            self.buffers.pop(widget, None)
-            return False
-        if key == Qt.Key.Key_Backspace:
-            return False
-        text = event.text()
-        if not text:
-            return False
-
-        self.buffers.pop(widget, None)
-
-        modifiers = event.modifiers()
-        char = None
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            char = KANA_DIRECT_SHIFT_MAP.get(text)
-            if char is None:
-                char = KANA_DIRECT_SHIFT_MAP.get(text.lower())
-        if char is None:
-            char = KANA_DIRECT_MAP.get(text)
-        if char is None:
-            char = KANA_DIRECT_MAP.get(text.lower())
-
-        if char:
-            self._insert_text(widget, char)
-            return True
-        return False
-
-    def _commit_pending_n(self, widget, force=False):
-        buf = self.buffers.get(widget, '')
-        if buf:
-            if buf == 'n' or (force and 'n' in buf):
-                self._insert_text(widget, 'ん')
-        self.buffers.pop(widget, None)
-
-    def _insert_text(self, widget, text):
-        cursor = widget.textCursor()
-        if cursor.hasSelection():
-            cursor.removeSelectedText()
-        cursor.insertText(text)
-        widget.setTextCursor(cursor)
-
-
-class ClickableLabel(QLabel):
-    clicked = pyqtSignal()
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
-
-
-class TimerSettingsDialog(QDialog):
-    def __init__(self, parent, initial_seconds, timer_running):
-        super().__init__(parent)
-        self.setWindowTitle("タイマー設定")
-        self.setModal(True)
-        self.setWindowModality(Qt.WindowModality.WindowModal)
-        self.main_window = parent
-
-        hours = max(0, initial_seconds // 3600)
-        minutes = max(0, (initial_seconds % 3600) // 60)
-        seconds = max(0, initial_seconds % 60)
-
-        layout = QVBoxLayout(self)
-        grid = QGridLayout()
-
-        grid.addWidget(QLabel("時間"), 0, 0)
-        self.hour_spin = QSpinBox()
-        self.hour_spin.setRange(0, 99)
-        self.hour_spin.setValue(min(hours, 99))
-        grid.addWidget(self.hour_spin, 0, 1)
-
-        grid.addWidget(QLabel("分"), 1, 0)
-        self.minute_spin = QSpinBox()
-        self.minute_spin.setRange(0, 59)
-        self.minute_spin.setValue(minutes)
-        grid.addWidget(self.minute_spin, 1, 1)
-
-        grid.addWidget(QLabel("秒"), 2, 0)
-        self.second_spin = QSpinBox()
-        self.second_spin.setRange(0, 59)
-        self.second_spin.setValue(seconds)
-        grid.addWidget(self.second_spin, 2, 1)
-
-        layout.addLayout(grid)
-
-        button_layout = QHBoxLayout()
-        self.pause_button = QPushButton("中断" if timer_running else "再開")
-        self.pause_button.clicked.connect(self._toggle_pause)
-        button_layout.addWidget(self.pause_button)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        button_layout.addWidget(button_box)
-
-        layout.addLayout(button_layout)
-        self._refresh_pause_button()
-
-    def _toggle_pause(self):
-        if self.main_window.timer.isActive():
-            self.main_window.pause_timer()
-        else:
-            if self.main_window.remaining_time > 0:
-                self.main_window.resume_timer()
-        self._refresh_pause_button()
-
-    def _refresh_pause_button(self):
-        running = self.main_window.timer.isActive()
-        self.pause_button.setText("中断" if running else "再開")
-
-    def total_seconds(self):
-        hours = self.hour_spin.value()
-        minutes = self.minute_spin.value()
-        seconds = self.second_spin.value()
-        return hours * 3600 + minutes * 60 + seconds
 
 
 class MainWindow(QMainWindow):
