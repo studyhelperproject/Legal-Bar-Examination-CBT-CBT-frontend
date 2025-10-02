@@ -11,8 +11,8 @@ from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
-from PyQt6.QtGui import QFont, QFontInfo, QPainter, QImage
-from PyQt6.QtCore import QMarginsF, QPointF, QRectF, Qt, QPageLayout
+from PyQt6.QtGui import QFont, QFontInfo, QPainter, QImage, QPageLayout
+from PyQt6.QtCore import QMarginsF, QPointF, QRectF, Qt
 from PyQt6.QtPrintSupport import QPrinter
 
 from ui.widgets import ANSWER_TEMPLATE_PATH
