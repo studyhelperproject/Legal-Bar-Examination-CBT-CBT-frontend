@@ -1,22 +1,45 @@
+from __future__ import annotations
 from datetime import datetime
+from typing import TYPE_CHECKING, List, Dict, Any
+
+if TYPE_CHECKING:
+    from ..main_window import MainWindow
 
 class HistoryHandler:
-    def __init__(self, main_window):
-        self.main = main_window
-        self.undo_stack = []
-        self.redo_stack = []
-        self.max_history = 50
-        self._restoring = False
+    """
+    アプリケーションの「元に戻す（Undo）」および「やり直し（Redo）」機能を管理するクラス。
 
-    def is_restoring(self):
+    PDFの表示状態、注釈、答案の内容など、アプリケーションの主要な状態をスナップショットとして
+    スタックに記録し、ユーザーが過去の状態に戻ったり、進んだりできるようにします。
+    """
+    def __init__(self, main_window: MainWindow) -> None:
+        """
+        HistoryHandlerのコンストラクタ。
+
+        Args:
+            main_window (MainWindow): 親となるメインウィンドウインスタンス。
+        """
+        self.main: MainWindow = main_window
+        self.undo_stack: List[Dict[str, Any]] = []
+        self.redo_stack: List[Dict[str, Any]] = []
+        self.max_history: int = 50
+        self._restoring: bool = False
+
+    def is_restoring(self) -> bool:
+        """現在、状態を復元中かどうかを返す。これにより、復元中の操作が新たな履歴として登録されるのを防ぐ。"""
         return self._restoring
 
-    def clear_history(self):
+    def clear_history(self) -> None:
+        """Undo/Redoの履歴をすべてクリアする。"""
         self.undo_stack.clear()
         self.redo_stack.clear()
         self._update_history_actions()
 
-    def register_snapshot(self):
+    def register_snapshot(self) -> None:
+        """
+        現在のアプリケーションの状態をスナップショットとして取得し、Undoスタックに登録する。
+        Redoスタックはクリアされる。
+        """
         if self._restoring:
             return
 
@@ -24,7 +47,7 @@ class HistoryHandler:
         if not snapshot:
             return
 
-        # Avoid duplicate snapshots
+        # 連続する重複したスナップショットを避ける
         if self.undo_stack and snapshot == self.undo_stack[-1]:
             return
 
@@ -35,7 +58,8 @@ class HistoryHandler:
         self.redo_stack.clear()
         self._update_history_actions()
 
-    def undo(self):
+    def undo(self) -> None:
+        """一つ前の状態に戻す。"""
         if len(self.undo_stack) <= 1:
             return
 
@@ -46,7 +70,8 @@ class HistoryHandler:
         self._restore_state(target)
         self._update_history_actions()
 
-    def redo(self):
+    def redo(self) -> None:
+        """元に戻した操作をやり直す。"""
         if not self.redo_stack:
             return
 
@@ -55,13 +80,18 @@ class HistoryHandler:
         self.undo_stack.append(target)
         self._update_history_actions()
 
-    def _update_history_actions(self):
+    def _update_history_actions(self) -> None:
+        """Undo/Redoが可能かどうかに基づいて、ツールバーのボタンの有効/無効を切り替える。"""
         can_undo = len(self.undo_stack) > 1
         can_redo = bool(self.redo_stack)
         self.main.undo_toolbar_action.setEnabled(can_undo)
         self.main.redo_toolbar_action.setEnabled(can_redo)
 
-    def _serialize_state(self):
+    def _serialize_state(self) -> Dict[str, Any]:
+        """
+        現在のアプリケーションの状態をシリアライズし、単一の辞書（スナップショット）として返す。
+        このスナップショットはUndo/Redoの単位となる。
+        """
         if not self.main.pdf_handler.pdf_document:
             return {}
 
@@ -81,13 +111,14 @@ class HistoryHandler:
             'answers': self._serialize_answers()
         }
 
-    def _restore_state(self, state):
+    def _restore_state(self, state: Dict[str, Any]) -> None:
+        """指定された状態スナップショットをアプリケーションに適用する。"""
         if not state:
             return
 
         self._restoring = True
         try:
-            # Restore PDF state
+            # PDFの状態を復元
             pdf_state = state.get('pdf_state', {})
             pdf_handler = self.main.pdf_handler
             pdf_handler.zoom_factor = pdf_state.get('zoom', 1.0)
@@ -97,16 +128,15 @@ class HistoryHandler:
             horizontal = pdf_state.get('scroll_horizontal', False)
             self.main.scroll_toggle_action.setChecked(horizontal)
             pdf_handler._apply_scroll_settings_without_refresh(horizontal)
-
             self.main.spread_toggle_action.setChecked(pdf_handler.spread_mode)
 
-            # Restore annotations
+            # 注釈を復元
             self.main.annotation_handler.deserialize_all(state.get('annotations', {}))
 
-            # Restore answers
+            # 答案を復元
             self._deserialize_answers(state.get('answers', []))
 
-            # Restore page and scroll
+            # ページとスクロール位置を復元
             target_page = max(0, min(pdf_state.get('current_page', 0), pdf_handler.total_pages - 1))
             pdf_handler.show_page(target_page)
 
@@ -115,17 +145,18 @@ class HistoryHandler:
             self.main.pdf_scroll_area.verticalScrollBar().setValue(scroll_values[1])
 
             self.main.annotation_handler.clear_selection()
-
         finally:
             self._restoring = False
 
-    def _serialize_answers(self):
+    def _serialize_answers(self) -> List[Dict[str, Any]]:
+        """全答案シートの内容をシリアライズする。"""
         return [{
             'page_texts': sheet.get_page_texts(),
             'current_page': sheet.current_page_index
         } for sheet in self.main.answer_sheets]
 
-    def _deserialize_answers(self, data):
+    def _deserialize_answers(self, data: List[Dict[str, Any]]) -> None:
+        """シリアライズされたデータから全答案シートの内容を復元する。"""
         if not data: return
         for i, sheet_data in enumerate(data):
             if i < len(self.main.answer_sheets):
@@ -136,7 +167,11 @@ class HistoryHandler:
                 sheet.set_current_page(sheet_data.get('current_page', 0))
         self.main.update_char_count()
 
-    def serialize_full_session(self):
+    def serialize_full_session(self) -> Dict[str, Any]:
+        """
+        セッション全体の状態をファイル保存用にシリアライズする。
+        Undo/Redo用のスナップショットよりも多くの情報（タイマー、UI設定など）を含む。
+        """
         payload = {
             'version': 1,
             'saved_at': datetime.now().isoformat(),
