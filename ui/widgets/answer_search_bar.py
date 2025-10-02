@@ -1,9 +1,35 @@
-# This file will contain the AnswerSearchBar widget.
+"""
+答案エディタ用の検索・置換バーウィジェットを提供します。
+"""
+from typing import Optional
+
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel
 
 class AnswerSearchBar(QWidget):
-    def __init__(self, parent=None):
+    """
+    答案エディタ内でテキストの検索と置換を行うためのUIコンポーネント。
+
+    検索語入力、次/前へ移動、結果カウント表示、置換語入力、
+    個別置換、一括置換の機能を持つウィジェットで構成されます。
+    デフォルトでは非表示になっています。
+    """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """
+        AnswerSearchBarのコンストラクタ。
+
+        Args:
+            parent (Optional[QWidget]): 親ウィジェット。
+        """
         super().__init__(parent)
+
+        # --- UI要素の型定義 ---
+        self.search_input: QLineEdit
+        self.count_label: QLabel
+        self.prev_button: QPushButton
+        self.next_button: QPushButton
+        self.replace_input: QLineEdit
+        self.replace_button: QPushButton
+        self.replace_all_button: QPushButton
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
