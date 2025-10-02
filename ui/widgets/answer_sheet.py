@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 from .answer_search_bar import AnswerSearchBar
 from .answer_page import AnswerSheetPageWidget
 from .answer_editor import AnswerGridEditor
+from .text_editor_config import TextEditorConfig
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -48,6 +49,9 @@ class AnswerSheet(QWidget):
         self.next_page_button: QPushButton
         self.page_indicator: QLabel
 
+        # --- エディタ設定 ---
+        editor_config = TextEditorConfig()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 5, 0, 0)
 
@@ -69,7 +73,7 @@ class AnswerSheet(QWidget):
 
         # 3. スクロールエリア内のページスタック
         self.page_stack = QStackedWidget()
-        self.pages = [AnswerSheetPageWidget(self) for _ in range(self.TOTAL_PAGES)]
+        self.pages = [AnswerSheetPageWidget(config=editor_config, parent=self) for _ in range(self.TOTAL_PAGES)]
         for page in self.pages:
             self.page_stack.addWidget(page)
             page.editor.contentModified.connect(self._on_content_changed)

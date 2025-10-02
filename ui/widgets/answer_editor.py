@@ -1,8 +1,11 @@
 from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal, Qt, QMimeData
-from PyQt6.QtGui import QFont, QFontInfo, QTextOption, QKeyEvent
+from PyQt6.QtGui import QTextOption, QKeyEvent
 from PyQt6.QtWidgets import QTextEdit, QWidget
+
+from .text_editor_config import TextEditorConfig
+
 
 class AnswerGridEditor(QTextEdit):
     """
@@ -16,11 +19,18 @@ class AnswerGridEditor(QTextEdit):
     """
     contentModified = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None, columns: int = 30, rows: int = 23) -> None:
+    def __init__(
+        self,
+        config: TextEditorConfig,
+        parent: Optional[QWidget] = None,
+        columns: int = 30,
+        rows: int = 23,
+    ) -> None:
         """
         AnswerGridEditorのコンストラクタ。
 
         Args:
+            config (TextEditorConfig): エディタのUI設定。
             parent (Optional[QWidget]): 親ウィジェット。
             columns (int): 1行あたりの最大文字数。
             rows (int): 最大行数。
@@ -30,12 +40,7 @@ class AnswerGridEditor(QTextEdit):
         self.max_lines: int = rows
         self._internal_change: bool = False
 
-        # フォント設定（ヒラギノ明朝が見つからない場合はMS明朝にフォールバック）
-        base_font = QFont("Hiragino Mincho ProN", 14)
-        if not QFontInfo(base_font).exactMatch():
-            base_font = QFont("MS Mincho", 14)
-        self.setFont(base_font)
-
+        self.setFont(config.get_font())
         self.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.textChanged.connect(self._on_text_changed)
 
