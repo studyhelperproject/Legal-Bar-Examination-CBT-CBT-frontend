@@ -1,13 +1,11 @@
 import os
 
 from .pdf_display import PDFDisplayLabel
-from .annotations import TextAnnotationWidget, ShapeAnnotationWidget
-from .answer_sheet import (
-    AnswerGridEditor,
-    AnswerGridBackground,
-    AnswerSheetPageWidget,
-    AnswerSheet,
-)
+from .text_annotation import TextAnnotationWidget
+from .shape_annotation import ShapeAnnotationWidget
+from .answer_sheet import AnswerSheet
+from .answer_editor import AnswerGridEditor
+from .answer_page import AnswerSheetPageWidget
 from .memo import MemoWindow
 
 ASSETS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
@@ -18,7 +16,6 @@ __all__ = [
     "TextAnnotationWidget",
     "ShapeAnnotationWidget",
     "AnswerGridEditor",
-    "AnswerGridBackground",
     "AnswerSheetPageWidget",
     "AnswerSheet",
     "MemoWindow",
