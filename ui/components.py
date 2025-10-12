@@ -66,6 +66,11 @@ class KanaInputFilter(QObject):
             bool: イベントが処理され、さらなる伝播を停止する場合はTrue。
                   それ以外の場合はFalse。
         """
+        # 循環参照を避けるためにローカルインポート
+        from ui.widgets.scrollable_editor import ScrollableAnswerEditor
+        if isinstance(obj, ScrollableAnswerEditor):
+            return False  # ScrollableAnswerEditorではこのフィルタを無効化
+
         if self.mode == 'off' or not isinstance(event, QKeyEvent) or event.type() != QEvent.Type.KeyPress:
             return False
         if not isinstance(obj, (QTextEdit, QPlainTextEdit)):

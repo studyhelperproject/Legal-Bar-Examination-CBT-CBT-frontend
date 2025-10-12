@@ -2,14 +2,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional
 
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QTextDocument, QTextCursor, QTextCharFormat, QColor
+from PyQt6.QtGui import QTextDocument, QTextCursor, QTextCharFormat, QColor, QFontMetrics, QTextOption
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
     QScrollArea, QFrame, QMessageBox
 )
 
 from .answer_search_bar import AnswerSearchBar
-from .answer_page import AnswerSheetPageWidget
 from .scrollable_editor import ScrollableAnswerEditor
 from .text_editor_config import TextEditorConfig
 
@@ -24,7 +23,6 @@ class AnswerSheet(QWidget):
     文字数カウンター、検索/置換バー、ページナビゲーションUIを提供します。
     """
     contentChanged = pyqtSignal()
-    TOTAL_PAGES: int = 8
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
@@ -42,12 +40,7 @@ class AnswerSheet(QWidget):
         self.answer_undo_button: QPushButton
         self.answer_redo_button: QPushButton
         self.search_bar: AnswerSearchBar
-        self.page_stack: QStackedWidget
-        self.pages: List[AnswerSheetPageWidget]
-        self.page_scroll: QScrollArea
-        self.prev_page_button: QPushButton
-        self.next_page_button: QPushButton
-        self.page_indicator: QLabel
+        self.editor: ScrollableAnswerEditor
 
         # --- エディタ設定 ---
         editor_config = TextEditorConfig()
@@ -71,41 +64,35 @@ class AnswerSheet(QWidget):
         # 2. 検索バー (初期状態は非表示)
         self.search_bar = AnswerSearchBar(self)
 
-        # 3. スクロールエリア内のページスタック
-        self.page_stack = QStackedWidget()
-        self.pages = [AnswerSheetPageWidget(config=editor_config, parent=self) for _ in range(self.TOTAL_PAGES)]
-        for page in self.pages:
-            self.page_stack.addWidget(page)
-            page.editor.contentModified.connect(self._on_content_changed)
+        # 3. エディタ
+        self.editor = ScrollableAnswerEditor(config=editor_config, parent=self)
+        self.editor.setWordWrapMode(QTextOption.WrapMode.WordWrap)
 
-        self.page_scroll = QScrollArea()
-        self.page_scroll.setWidgetResizable(True)
-        self.page_scroll.setWidget(self.page_stack)
-        self.page_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.page_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # 4. ナビゲーションバー
-        nav_layout = QHBoxLayout()
-        self.prev_page_button = QPushButton("前の頁")
-        self.next_page_button = QPushButton("次の頁")
-        self.page_indicator = QLabel("1 / 8")
-        nav_layout.addWidget(self.prev_page_button)
-        nav_layout.addWidget(self.page_indicator)
-        nav_layout.addWidget(self.next_page_button)
-        nav_layout.addStretch()
+        # --- Width Calculation for 30 full-width characters ---
+        font_metrics = QFontMetrics(self.editor.font())
+        # Calculate the pixel width of 30 full-width characters.
+        text_width = font_metrics.horizontalAdvance('あ' * self.editor.max_chars)
+        
+        # Get other layout metrics.
+        line_number_width = self.editor.get_line_number_area_width()
+        frame_width = self.editor.frameWidth() * 2
+        document_margin = self.editor.document().documentMargin() * 2
+        
+        # The total width must accommodate all components.
+        total_width = text_width + line_number_width + frame_width + document_margin
+        
+        self.editor.setFixedWidth(int(total_width))
 
         # すべてのコンポーネントをメインレイアウトに追加
         layout.addLayout(info_bar)
         layout.addWidget(self.search_bar)
-        layout.addWidget(self.page_scroll)
-        layout.addLayout(nav_layout)
+        layout.addWidget(self.editor)
 
         # --- 接続 ---
         self.toggle_search_button.toggled.connect(self.search_bar.setVisible)
-        self.prev_page_button.clicked.connect(self.go_prev_page)
-        self.next_page_button.clicked.connect(self.go_next_page)
-        self.answer_undo_button.clicked.connect(self.undo_current)
-        self.answer_redo_button.clicked.connect(self.redo_current)
+        self.answer_undo_button.clicked.connect(self.undo)
+        self.answer_redo_button.clicked.connect(self.redo)
+        self.editor.contentModified.connect(self._on_content_changed)
 
         # 検索関連の接続
         self.search_bar.search_input.textChanged.connect(self._on_search_text_changed)
@@ -116,7 +103,7 @@ class AnswerSheet(QWidget):
 
         # --- 初期状態 ---
         self.current_page_index: int = 0
-        self.update_page_controls()
+
         self.update_status_label()
 
     def _on_content_changed(self) -> None:
@@ -124,77 +111,37 @@ class AnswerSheet(QWidget):
         self.update_status_label()
         self.contentChanged.emit()
 
-    # --- ページナビゲーションとアクセス ---
-
-    def current_page(self) -> AnswerSheetPageWidget:
-        """現在表示されているページウィジェットを返す。"""
-        return self.pages[self.current_page_index]
-
-    def current_editor(self) -> ScrollableAnswerEditor:
-        """現在表示されているページのエディタウィジェットを返す。"""
-        return self.current_page().editor
-
-    def go_prev_page(self) -> None:
-        """前のページに移動する。"""
-        if self.current_page_index > 0:
-            self.set_current_page(self.current_page_index - 1)
-
-    def go_next_page(self) -> None:
-        """次のページに移動する。"""
-        if self.current_page_index < self.TOTAL_PAGES - 1:
-            self.set_current_page(self.current_page_index + 1)
-
-    def set_current_page(self, index: int) -> None:
-        """指定されたインデックスのページを表示する。"""
-        self.current_page_index = max(0, min(index, self.TOTAL_PAGES - 1))
-        self.page_stack.setCurrentIndex(self.current_page_index)
-        self.update_page_controls()
-        self.contentChanged.emit()
-
-    def update_page_controls(self) -> None:
-        """ページインジケーターとナビゲーションボタンの状態を更新する。"""
-        self.page_indicator.setText(f"{self.current_page_index + 1} / {self.TOTAL_PAGES}")
-        self.prev_page_button.setEnabled(self.current_page_index > 0)
-        self.next_page_button.setEnabled(self.current_page_index < self.TOTAL_PAGES - 1)
-
-    def undo_current(self) -> None:
+    def undo(self) -> None:
         """現在のページでUndo操作を実行する。"""
-        self.current_editor().undo()
+        self.editor.undo()
 
-    def redo_current(self) -> None:
+    def redo(self) -> None:
         """現在のページでRedo操作を実行する。"""
-        self.current_editor().redo()
+        self.editor.redo()
 
     # --- 内容とステータス ---
 
     def update_status_label(self) -> None:
         """全体の行数と文字数を計算し、ステータスラベルを更新する。"""
-        total_lines = sum(p.get_content().count('\n') + 1 for p in self.pages if p.get_content())
-        total_chars = sum(len(p.get_content()) for p in self.pages)
-        max_lines = self.TOTAL_PAGES * self.pages[0].editor.max_lines
-        self.char_count_label.setText(f"{total_lines}/{max_lines}行 {total_chars}文字")
+        content = self.editor.get_content()
+        total_chars = len(content)
+        max_lines = self.editor.max_lines
 
-    def get_page_texts(self) -> List[str]:
-        """全ページのテキスト内容をリストとして取得する。"""
-        return [p.get_content() for p in self.pages]
+        # 折り返しを考慮した総行数を計算
+        total_lines = self.editor.get_visual_line_count()
 
-    def set_page_texts(self, texts: List[str]) -> None:
-        """リストから全ページのテキスト内容を設定する。"""
-        for i, page in enumerate(self.pages):
-            page.set_content(texts[i] if i < len(texts) else "")
-        self.update_status_label()
-        self.contentChanged.emit()
+        # 最大文字数2760を直接指定
+        self.char_count_label.setText(f"{total_lines}/{max_lines}行 {total_chars}/2760文字")
 
     # --- 検索と置換ロジック ---
 
     def _clear_all_highlights(self) -> None:
         """全ページの検索ハイライトをクリアする。"""
-        for page in self.pages:
-            cursor = page.editor.textCursor()
-            cursor.select(QTextCursor.SelectionType.Document)
-            cursor.setCharFormat(QTextCharFormat())
-            cursor.clearSelection()
-            page.editor.setTextCursor(cursor)
+        cursor = self.editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.setCharFormat(QTextCharFormat())
+        cursor.clearSelection()
+        self.editor.setTextCursor(cursor)
 
     def _on_search_text_changed(self, keyword: str) -> None:
         """検索語が変更されたときに、全ページを対象にハイライトを更新する。"""
@@ -207,14 +154,15 @@ class AnswerSheet(QWidget):
         highlight_format = QTextCharFormat()
         highlight_format.setBackground(QColor("yellow"))
 
-        for page in self.pages:
-            doc = page.editor.document()
-            cursor = QTextCursor(doc)
-            while True:
-                cursor = doc.find(keyword, cursor)
-                if cursor.isNull(): break
-                cursor.mergeCharFormat(highlight_format)
-                total_count += 1
+
+        doc = self.editor.document()
+        cursor = QTextCursor(doc)
+        while True:
+            cursor = doc.find(keyword, cursor)
+            if cursor.isNull(): break
+            cursor.mergeCharFormat(highlight_format)
+            total_count += 1
+
         self.search_bar.count_label.setText(f"0/{total_count}")
 
     def find_in_answer(self, forward: bool = True) -> None:
@@ -222,7 +170,7 @@ class AnswerSheet(QWidget):
         keyword = self.search_bar.search_input.text()
         if not keyword: return
 
-        editor = self.current_editor()
+        editor = self.editor
         flags = QTextDocument.FindFlag(0) if forward else QTextDocument.FindFlag.FindBackward
 
         found_cursor = editor.document().find(keyword, editor.textCursor(), flags)
@@ -235,7 +183,7 @@ class AnswerSheet(QWidget):
         """現在選択されている検索結果を置換し、次の結果に移動する。"""
         keyword = self.search_bar.search_input.text()
         replace_text = self.search_bar.replace_input.text()
-        editor = self.current_editor()
+        editor = self.editor
 
         if keyword and editor.textCursor().hasSelection() and editor.textCursor().selectedText() == keyword:
             editor.insertPlainText(replace_text)
@@ -248,12 +196,13 @@ class AnswerSheet(QWidget):
         if not keyword: return
 
         count = 0
-        for page in self.pages:
-            original_text = page.get_content()
-            if keyword in original_text:
-                count += original_text.count(keyword)
-                new_text = original_text.replace(keyword, replace_text)
-                page.set_content(new_text)
+        original_text = self.editor.toPlainText()
+        count = original_text.count(keyword)
+
+        if count > 0:
+            new_text = original_text.replace(keyword, replace_text)
+            self.editor.setPlainText(new_text)
+        
 
         QMessageBox.information(self, "一括置換", f"{count}件の項目を置換しました。")
         self._on_search_text_changed(keyword) # ハイライトを再適用
