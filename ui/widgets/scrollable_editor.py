@@ -29,6 +29,7 @@ class ScrollableAnswerEditor(QTextEdit):
     罫線と行番号が統合された、スクロール可能なテキストエディタウィジェット。
     """
     contentModified = pyqtSignal()
+    historyChanged = pyqtSignal()
 
     def __init__(
         self,
@@ -42,6 +43,11 @@ class ScrollableAnswerEditor(QTextEdit):
         self.max_chars = columns
         self.max_lines = rows
         self._internal_change = False
+
+        # --- History ---
+        self.undo_stack = [self.toPlainText()]
+        self.redo_stack = []
+        self.max_history = 100
 
         self.setFont(self.config.get_font())
         self.set_editor_width()
@@ -128,6 +134,7 @@ class ScrollableAnswerEditor(QTextEdit):
         finally:
             self._internal_change = False
 
+        self._push_undo_stack()
         self.contentModified.emit()
 
     def get_visual_line_count(self) -> int:
@@ -308,6 +315,50 @@ class ScrollableAnswerEditor(QTextEdit):
             self.insertPlainText('\n')
             return
         super().keyPressEvent(event)
+
+    def _push_undo_stack(self) -> None:
+        """現在のテキスト状態をUndoスタックに保存する。"""
+        current_text = self.toPlainText()
+        if self.undo_stack and self.undo_stack[-1] == current_text:
+            return
+
+        self.undo_stack.append(current_text)
+        if len(self.undo_stack) > self.max_history:
+            self.undo_stack.pop(0)
+        
+        if self.redo_stack:
+            self.redo_stack.clear()
+        
+        self.historyChanged.emit()
+
+    def undo(self) -> None:
+        """Undo操作を実行する。"""
+        if len(self.undo_stack) > 1:
+            self.redo_stack.append(self.undo_stack.pop())
+            self._set_text_internal(self.undo_stack[-1])
+            self.historyChanged.emit()
+
+    def redo(self) -> None:
+        """Redo操作を実行する。"""
+        if self.redo_stack:
+            text = self.redo_stack.pop()
+            self.undo_stack.append(text)
+            self._set_text_internal(text)
+            self.historyChanged.emit()
+
+    def _set_text_internal(self, text: str) -> None:
+        """内部的なテキスト設定。_on_text_changedがトリガーされないようにする。"""
+        self._internal_change = True
+        try:
+            cursor = self.textCursor()
+            original_position = cursor.position()
+            self.setPlainText(text)
+            # カーソル位置を復元しようと試みるが、テキスト長が変わると不正確になる可能性がある
+            cursor.setPosition(min(original_position, len(text)))
+            self.setTextCursor(cursor)
+            self.set_line_spacing()
+        finally:
+            self._internal_change = False
 
     def insertFromMimeData(self, source: QMimeData) -> None:
         """プレーンテキストのみをペーストし、すべて全角に変換する。"""

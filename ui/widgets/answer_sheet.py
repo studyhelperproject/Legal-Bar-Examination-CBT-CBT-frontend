@@ -93,6 +93,7 @@ class AnswerSheet(QWidget):
         self.answer_undo_button.clicked.connect(self.undo)
         self.answer_redo_button.clicked.connect(self.redo)
         self.editor.contentModified.connect(self._on_content_changed)
+        self.editor.historyChanged.connect(self._update_history_buttons)
 
         # 検索関連の接続
         self.search_bar.search_input.textChanged.connect(self._on_search_text_changed)
@@ -105,6 +106,12 @@ class AnswerSheet(QWidget):
         self.current_page_index: int = 0
 
         self.update_status_label()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        """Undo/Redoボタンの有効/無効状態を更新する。"""
+        self.answer_undo_button.setEnabled(len(self.editor.undo_stack) > 1)
+        self.answer_redo_button.setEnabled(bool(self.editor.redo_stack))
 
     def _on_content_changed(self) -> None:
         """ページ内容が変更されたときに呼び出されるスロット。ステータスを更新し、シグナルを発行する。"""
