@@ -81,12 +81,21 @@ class AnswerSheet(QWidget):
         # The total width must accommodate all components.
         total_width = text_width + line_number_width + frame_width + document_margin
         
+        # エディタ自体の幅は固定する
         self.editor.setFixedWidth(int(total_width))
+
+        # --- QScrollAreaの作成と設定 ---
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidget(self.editor)
+        scroll_area.setWidgetResizable(True) # ウィジェットのリサイズを許可
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff) # 縦スクロールはエディタに任せる
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame) # スクロールエリア自体の枠線を消す
 
         # すべてのコンポーネントをメインレイアウトに追加
         layout.addLayout(info_bar)
         layout.addWidget(self.search_bar)
-        layout.addWidget(self.editor)
+        layout.addWidget(scroll_area)
 
         # --- 接続 ---
         self.toggle_search_button.toggled.connect(self.search_bar.setVisible)

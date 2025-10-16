@@ -403,6 +403,7 @@ class ScrollableAnswerEditor(QTextEdit):
         total_width = (char_width * self.config.chars_per_line) + line_number_area_width + 15  # 15pxのマージン
         
         self.setFixedWidth(total_width)
+        # self.setMinimumWidth(total_width)
 
     def set_content(self, text: str) -> None:
         self._internal_change = True
